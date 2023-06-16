@@ -5,7 +5,7 @@ import seaborn as sns
 
 class LatticePop:
     def __init__(self, mut_matrix, birth_rates, death_rates, geometry="cylinder"):
-        # mutation rate per division from i -> j
+        # mutation rate per unit time from i -> j
         self.mu = np.copy(mut_matrix)
         self.total_mut_rates = np.sum(self.mu, axis=1).flatten()
         self.birth = np.copy(birth_rates)
@@ -61,6 +61,9 @@ class LatticePop:
     def get_num_empties(self, loc):
         return(len(self.get_adj_empties(loc)))
     
+    def calc_mut_mat(self):
+        return(np.multiply(self.types, self.total_mut_rates.reshape((-1,1))))
+    
     def calc_birth_mat(self):
         neighbor_adjusted = np.multiply(self.types, np.arange(self.max_neighbors).reshape((1,-1)))
         return(np.multiply(neighbor_adjusted, self.birth.reshape((-1,1))))
@@ -69,7 +72,7 @@ class LatticePop:
         return(np.multiply(self.types, self.death.reshape((-1,1))))
     
     def update_total_rate(self):
-        self.total_rate = np.sum(self.calc_birth_mat() + self.calc_death_mat())
+        self.total_rate = np.sum(self.calc_birth_mat() + self.calc_death_mat() + self.calc_mut_mat())
     
     def add_cell(self, loc, new_type):
         occ = self.get_num_empties(loc)
@@ -136,8 +139,12 @@ class LatticePop:
         # NEEDS TO UPDATE: total_cells, total_rate, locs, types, type_to_loc
         birth_mat = self.calc_birth_mat()
         death_mat = self.calc_death_mat()
-        p_birth = np.sum(birth_mat)/(np.sum(birth_mat) + np.sum(death_mat))
-        if np.random.uniform() < p_birth:
+        mut_mat = self.calc_mut_mat()
+        denom = np.sum(birth_mat) + np.sum(death_mat) + np.sum(mut_mat)
+        p_birth = np.sum(birth_mat)/denom
+        p_death = p_birth + np.sum(death_mat)/denom
+        unif_sampled = np.random.uniform()
+        if unif_sampled < p_birth:
             reproducer = np.random.choice(birth_mat.size, p=birth_mat.flatten()/np.sum(birth_mat))
             rep_type = reproducer // self.max_neighbors
             rep_occ = reproducer % self.max_neighbors
@@ -145,18 +152,24 @@ class LatticePop:
             rep_loc = to_choose[np.random.choice(len(to_choose))]
             to_choose = self.get_adj_empties(rep_loc)
             new_loc = to_choose[np.random.choice(len(to_choose))]
-            if np.random.uniform() < self.total_mut_rates[rep_type]:
-                new_type = np.random.choice(self.num_types, p=self.mu[rep_type,:].flatten()/np.sum(self.mu[rep_type,:]))
-            else:
-                new_type = rep_type
-            self.add_cell(new_loc, new_type)
-        else:
+            self.add_cell(new_loc, rep_type)
+        elif unif_sampled < p_death:
             dead = np.random.choice(death_mat.size, p=death_mat.flatten()/np.sum(death_mat))
             dead_type = dead // self.max_neighbors
             dead_occ = dead % self.max_neighbors
             to_choose = self.type_to_loc[dead_type][dead_occ]
             dead_loc = to_choose[np.random.choice(len(to_choose))]
             self.remove_cell(dead_loc)
+        else:
+            mutated = np.random.choice(mut_mat.size, p=mut_mat.flatten()/np.sum(mut_mat))
+            mut_type = mutated // self.max_neighbors
+            mut_occ = mutated % self.max_neighbors
+            to_choose = self.type_to_loc[mut_type][mut_occ]
+            mut_loc = to_choose[np.random.choice(len(to_choose))]
+            
+            new_type = np.random.choice(self.num_types, p=self.mu[mut_type,:].flatten()/np.sum(self.mu[mut_type,:]))
+            self.remove_cell(mut_loc)
+            self.add_cell(mut_loc, new_type)
     
     def simulate(self, timespan, stop_conditions={}):
         curr_time = 0
